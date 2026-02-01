@@ -1,6 +1,5 @@
--- PerplexityESP v2.0 CLEAN - Player ESP Only (Item ESP REMOVED)
--- Minimap Radar + Off-Screen Arrows + Full Player ESP
--- 100% Clean - No Item ESP bloat
+-- PerplexityESP v2.0 ULTRA CLEAN - Player ESP ONLY (ZERO Item ESP)
+-- Minimap + Arrows + Boxes + Health - 100% bulletproof
 
 local PerplexityESP = {}
 PerplexityESP.__index = PerplexityESP
@@ -11,7 +10,7 @@ local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 
--- Internal Storage (ItemESPObjects REMOVED)
+-- Storage (NO ItemESPObjects)
 local ESPObjects = {}
 local Settings = {
     Enabled = true,
@@ -19,13 +18,12 @@ local Settings = {
     DistanceCheck = false,
     MaxDistance = 5000,
     RainbowSpeed = 1,
-    PerformanceMode = false,
+    RainbowEnabled = false,
     MinimapEnabled = true,
-    ArrowsEnabled = true,
-    RainbowEnabled = false  -- Added missing setting
+    ArrowsEnabled = true
 }
 
--- Colors (Item colors REMOVED)
+-- Colors
 local Colors = {
     Enemy = Color3.fromRGB(255, 0, 0),
     Team = Color3.fromRGB(0, 255, 0),
@@ -33,223 +31,158 @@ local Colors = {
     HealthGreen = Color3.fromRGB(0, 255, 0),
     HealthRed = Color3.fromRGB(255, 0, 0),
     Black = Color3.fromRGB(0, 0, 0),
-    MinimapPlayer = Color3.fromRGB(255, 0, 0),
     MinimapLocal = Color3.fromRGB(0, 255, 0)
 }
 
--- Settings
-local Minimap = {Size = 200, Position = Vector2.new(20, 20), CenterDotSize = 8, PlayerDotSize = 4, FOV = 500}
+local Minimap = {Size = 200, Position = Vector2.new(20, 20), CenterDotSize = 8, PlayerDotSize = 4}
 local Arrows = {Size = 30, DistanceFromEdge = 50}
 
--- Drawing Utilities
-local function CreateDrawing(type, properties)
+local function CreateDrawing(type, props)
     local obj = Drawing.new(type)
-    for prop, value in pairs(properties or {}) do
-        obj[prop] = value
-    end
+    for k, v in pairs(props) do obj[k] = v end
     return obj
 end
 
-local function WorldToScreen(position)
-    local screenPos, onScreen = Camera:WorldToViewportPoint(position)
-    return Vector2.new(screenPos.X, screenPos.Y), onScreen, screenPos.Z
+local function WorldToScreen(pos)
+    local screen, onScreen = Camera:WorldToViewportPoint(pos)
+    return Vector2.new(screen.X, screen.Y), onScreen
 end
 
-local function DistanceFromCamera(pos)
-    return (Camera.CFrame.Position - pos.Position).Magnitude
+local function DistanceFromCamera(part)
+    return (Camera.CFrame.Position - part.Position).Magnitude
 end
 
 local function RainbowColor()
     return Color3.fromHSV((tick() * Settings.RainbowSpeed) % 1, 1, 1)
 end
 
--- FIXED: Simplified WorldToRadar
-local function WorldToRadar(worldPos)
-    local localPos = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not localPos then return Minimap.Position end
-    
-    local center = localPos.Position
-    local relativePos = worldPos - center
-    local radarPos = Vector2.new(relativePos.X, relativePos.Z)
-    local scale = Minimap.Size / 2 / Minimap.FOV
-    return Minimap.Position + Vector2.new(Minimap.Size/2, Minimap.Size/2) + radarPos * scale
-end
-
--- FIXED: Arrow helper (Square-based)
-local function GetOffScreenArrowPos(rootPart)
-    local screenCenter = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
-    local angle = math.atan2(rootPart.Position.Y - Camera.CFrame.Position.Y, rootPart.Position.X - Camera.CFrame.Position.X)
-    return screenCenter + Vector2.new(math.cos(angle), math.sin(angle)) * (Arrows.DistanceFromEdge + Arrows.Size/2)
-end
-
--- ESP Object Class (ALL ERRORS FIXED)
+-- ESP Object (Player ONLY)
 local ESPObject = {}
 ESPObject.__index = ESPObject
 
 function ESPObject.new(target)
     local self = setmetatable({}, ESPObject)
     self.Target = target
-    self.Character = target.Character
-    self.Enabled = true
     self.Drawings = {}
     self:AddDrawings()
     return self
 end
 
 function ESPObject:AddDrawings()
-    local drawings = self.Drawings
+    local d = self.Drawings
+    d.Box = CreateDrawing("Square", {Filled = false, Thickness = 2, Color = Colors.Enemy, Visible = false})
+    d.Fill = CreateDrawing("Square", {Filled = true, Transparency = 0.5, Visible = false})
+    d.HealthBG = CreateDrawing("Square", {Filled = true, Transparency = 0.8, Color = Colors.Black, Visible = false})
+    d.Health = CreateDrawing("Square", {Filled = true, Thickness = 3, Visible = false})
+    d.Name = CreateDrawing("Text", {Size = 14, Center = true, Outline = true, Font = 2, Visible = false})
+    d.Dist = CreateDrawing("Text", {Size = 12, Center = true, Outline = true, Font = 2, Visible = false})
+    d.Tracer = CreateDrawing("Line", {Thickness = 2, Transparency = 1, Visible = false})
     
-    drawings.Box = CreateDrawing("Square", {Filled = false, Thickness = 2, Visible = false, Color = Colors.Enemy})
-    drawings.BoxFill = CreateDrawing("Square", {Filled = true, Thickness = 1, Transparency = 0.5, Visible = false})
-    drawings.HealthBG = CreateDrawing("Square", {Filled = true, Thickness = 1, Transparency = 0.8, Visible = false})
-    drawings.HealthBar = CreateDrawing("Square", {Filled = true, Thickness = 3, Visible = false})
-    drawings.Name = CreateDrawing("Text", {Size = 14, Center = true, Outline = true, Font = 2, Visible = false})
-    drawings.Distance = CreateDrawing("Text", {Size = 12, Center = true, Outline = true, Font = 2, Visible = false})
-    drawings.Tracer = CreateDrawing("Line", {Thickness = 2, Transparency = 1, Visible = false})
+    -- FIXED Arrow (Square only)
+    self.Arrow = CreateDrawing("Square", {
+        Filled = true, Thickness = 2, Color = Colors.Enemy, 
+        Transparency = 0.8, Visible = false, Rotation = 45
+    })
     
-    -- FIXED: Arrow uses Square NOT Triangle
-    if Settings.ArrowsEnabled then
-        self.Arrow = CreateDrawing("Square", {
-            Filled = true,
-            Thickness = 2,
-            Color = Colors.Enemy,
-            Transparency = 0.8,
-            Visible = false,
-            Rotation = 45
-        })
-    end
-    
-    -- Minimap Dot
-    if Settings.MinimapEnabled then
-        self.MinimapDot = CreateDrawing("Circle", {
-            Radius = Minimap.PlayerDotSize,
-            Filled = true,
-            Thickness = 1,
-            Color = Colors.Enemy,
-            Transparency = 1,
-            Visible = true
-        })
-    end
-    
-    -- Chams
-    pcall(function()
-        if self.Target ~= LocalPlayer and self.Character then
-            self.Highlight = Instance.new("Highlight")
-            self.Highlight.Parent = self.Character
-            self.Highlight.FillColor = Colors.Enemy
-            self.Highlight.OutlineColor = Colors.Enemy
-            self.Highlight.FillTransparency = 0.5
-            self.Highlight.OutlineTransparency = 0
-        end
-    end)
+    self.Dot = CreateDrawing("Circle", {
+        Radius = Minimap.PlayerDotSize, Filled = true, 
+        Color = Colors.Enemy, Visible = false
+    })
 end
 
 function ESPObject:Update()
-    if not self.Enabled or not self.Character then return end
-    local rootPart = self.Character:FindFirstChild("HumanoidRootPart")
-    local humanoid = self.Character:FindFirstChild("Humanoid")
-    if not rootPart then return end
+    local char = self.Target.Character
+    if not char then return end
     
-    local rootPos3D = rootPart.Position
-    local rootPos, onScreen = WorldToScreen(rootPos3D)
-    local dist = DistanceFromCamera(rootPart)
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChild("Humanoid")
+    if not root then return end
     
-    if Settings.DistanceCheck and dist > Settings.MaxDistance then
-        self:SetVisible(false)
-        return
-    end
+    local pos3d = root.Position
+    local pos2d, onScreen = WorldToScreen(pos3d)
+    local dist = DistanceFromCamera(root)
     
-    local color = Settings.TeamCheck and self.Target.Team == LocalPlayer.Team and Colors.Team or Colors.Enemy
+    if Settings.DistanceCheck and dist > Settings.MaxDistance then return end
+    
+    local color = Settings.TeamCheck and self.Target.Team == LocalPlayer.Team 
+        and Colors.Team or Colors.Enemy
     if Settings.RainbowEnabled then color = RainbowColor() end
     
+    local size = Vector2.new(2000/dist, 3000/dist)
+    
     if onScreen then
-        local size = Vector2.new(2000/dist, 3000/dist)
-        
-        self.Drawings.Box.PointA = rootPos - size/2
-        self.Drawings.Box.PointB = rootPos + size/2
+        -- Main ESP
+        self.Drawings.Box.PointA = pos2d - size/2
+        self.Drawings.Box.PointB = pos2d + size/2
         self.Drawings.Box.Color = color
         self.Drawings.Box.Visible = true
         
-        self.Drawings.BoxFill.PointA = rootPos - size/2
-        self.Drawings.BoxFill.PointB = rootPos + size/2
-        self.Drawings.BoxFill.Color = color
-        self.Drawings.BoxFill.Transparency = 0.3
-        self.Drawings.BoxFill.Visible = true
+        self.Drawings.Fill.PointA = pos2d - size/2
+        self.Drawings.Fill.PointB = pos2d + size/2
+        self.Drawings.Fill.Color = color
+        self.Drawings.Fill.Visible = true
         
-        -- Health Bar
-        local health = humanoid and humanoid.Health / humanoid.MaxHealth or 1
-        self.Drawings.HealthBG.PointA = rootPos - Vector2.new(12, size.Y/2)
-        self.Drawings.HealthBG.PointB = rootPos - Vector2.new(8, -size.Y/2)
+        -- Health
+        local health = hum and hum.Health / hum.MaxHealth or 1
+        self.Drawings.HealthBG.PointA = pos2d - Vector2.new(12, size.Y/2)
+        self.Drawings.HealthBG.PointB = pos2d - Vector2.new(8, -size.Y/2)
         self.Drawings.HealthBG.Visible = true
         
-        self.Drawings.HealthBar.PointA = rootPos - Vector2.new(12, size.Y/2 * (2-health))
-        self.Drawings.HealthBar.PointB = rootPos - Vector2.new(8, -size.Y/2)
-        self.Drawings.HealthBar.Color = Color3.new(
+        self.Drawings.Health.PointA = pos2d - Vector2.new(12, size.Y/2 * (2-health))
+        self.Drawings.Health.PointB = pos2d - Vector2.new(8, -size.Y/2)
+        self.Drawings.Health.Color = Color3.new(
             Colors.HealthGreen.R * (1-health) + Colors.HealthRed.R * health,
             Colors.HealthGreen.G * (1-health) + Colors.HealthRed.G * health,
             Colors.HealthGreen.B * (1-health) + Colors.HealthRed.B * health
         )
-        self.Drawings.HealthBar.Visible = true
+        self.Drawings.Health.Visible = true
         
         self.Drawings.Name.Text = self.Target.Name
-        self.Drawings.Name.Position = rootPos + Vector2.new(0, -size.Y/2 - 20)
+        self.Drawings.Name.Position = pos2d + Vector2.new(0, -size.Y/2 - 20)
         self.Drawings.Name.Color = color
         self.Drawings.Name.Visible = true
         
-        self.Drawings.Distance.Text = math.floor(dist) .. "m"
-        self.Drawings.Distance.Position = rootPos + Vector2.new(0, size.Y/2 + 5)
-        self.Drawings.Distance.Color = Colors.Wallbang
-        self.Drawings.Distance.Visible = true
+        self.Drawings.Dist.Text = math.floor(dist) .. "m"
+        self.Drawings.Dist.Position = pos2d + Vector2.new(0, size.Y/2 + 5)
+        self.Drawings.Dist.Color = Colors.Wallbang
+        self.Drawings.Dist.Visible = true
         
-        self.Drawings.Tracer.From = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y)
-        self.Drawings.Tracer.To = rootPos - Vector2.new(0, 20)
+        self.Drawings.Tracer.From = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2 + 100)
+        self.Drawings.Tracer.To = pos2d
         self.Drawings.Tracer.Color = color
         self.Drawings.Tracer.Visible = true
         
-        if self.Arrow then self.Arrow.Visible = false end
+        self.Arrow.Visible = false
         
     else
-        -- FIXED Off-Screen Arrows (Square rotation)
-        if self.Arrow and rootPart then
-            local arrowPos = GetOffScreenArrowPos(rootPart)
-            self.Arrow.Position = arrowPos
-            local angle = math.atan2(rootPos3D.Y - Camera.CFrame.Position.Y, rootPos3D.X - Camera.CFrame.Position.X)
-            self.Arrow.Rotation = math.deg(angle) + 45
-            self.Arrow.Color = color
-            self.Arrow.Visible = true
+        -- Off-screen arrow
+        local screenCenter = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+        local angle = math.atan2(pos3d.Y - Camera.CFrame.Position.Y, pos3d.X - Camera.CFrame.Position.X)
+        local arrowPos = screenCenter + Vector2.new(math.cos(angle), math.sin(angle)) * (Arrows.DistanceFromEdge + Arrows.Size/2)
+        
+        self.Arrow.Position = arrowPos
+        self.Arrow.Rotation = math.deg(angle) + 45
+        self.Arrow.Color = color
+        self.Arrow.Visible = true
+    end
+    
+    -- Minimap
+    if Settings.MinimapEnabled then
+        local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if localRoot then
+            local relPos = (pos3d - localRoot.Position)
+            local radarPos = Minimap.Position + Vector2.new(Minimap.Size/2, Minimap.Size/2) + Vector2.new(relPos.X, relPos.Z) * 0.2
+            self.Dot.Position = radarPos
+            self.Dot.Color = color
+            self.Dot.Visible = true
         end
     end
-    
-    -- Minimap Dot
-    if self.MinimapDot and Settings.MinimapEnabled and rootPart then
-        local radarPos = WorldToRadar(rootPart.Position)
-        self.MinimapDot.Position = radarPos
-        self.MinimapDot.Color = color
-        self.MinimapDot.Visible = true
-    end
-    
-    -- Update Chams
-    if self.Highlight then
-        self.Highlight.FillColor = color
-        self.Highlight.OutlineColor = color
-    end
-end
-
-function ESPObject:SetVisible(visible)
-    for _, drawing in pairs(self.Drawings) do
-        drawing.Visible = visible
-    end
-    if self.Arrow then self.Arrow.Visible = visible end
-    if self.MinimapDot then self.MinimapDot.Visible = visible end
 end
 
 function ESPObject:Destroy()
-    for _, drawing in pairs(self.Drawings) do
-        pcall(function() drawing:Remove() end)
-    end
-    pcall(function() if self.Arrow then self.Arrow:Remove() end end)
-    pcall(function() if self.MinimapDot then self.MinimapDot:Remove() end end)
-    pcall(function() if self.Highlight then self.Highlight:Destroy() end end)
+    for _, d in pairs(self.Drawings) do pcall(function() d:Remove() end) end
+    pcall(function() self.Arrow:Remove() end)
+    pcall(function() self.Dot:Remove() end)
 end
 
 -- Global Minimap
@@ -263,77 +196,57 @@ local LocalDot = CreateDrawing("Circle", {
     Radius = Minimap.CenterDotSize, Filled = true, Color = Colors.MinimapLocal, Visible = true
 })
 
--- Library Methods (Item ESP methods REMOVED)
+-- API
 function PerplexityESP:CreateESP()
-    for _, target in ipairs(Players:GetPlayers()) do
-        if target ~= LocalPlayer and not ESPObjects[target] then
-            ESPObjects[target] = ESPObject.new(target)
-            target.CharacterAdded:Connect(function()
-                if ESPObjects[target] then ESPObjects[target]:Destroy() end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and not ESPObjects[p] then
+            ESPObjects[p] = ESPObject.new(p)
+            p.CharacterAdded:Connect(function()
+                if ESPObjects[p] then ESPObjects[p]:Destroy() end
                 task.wait(1)
-                ESPObjects[target] = ESPObject.new(target)
+                ESPObjects[p] = ESPObject.new(p)
             end)
         end
     end
 end
 
-function PerplexityESP:Toggle()
-    Settings.Enabled = not Settings.Enabled
-    for _, esp in pairs(ESPObjects) do esp.Enabled = Settings.Enabled end
-end
-
-function PerplexityESP:SetTeamCheck(state) Settings.TeamCheck = state end
-function PerplexityESP:SetRainbow(state) Settings.RainbowEnabled = state end
+function PerplexityESP:Toggle() Settings.Enabled = not Settings.Enabled end
+function PerplexityESP:SetTeamCheck(b) Settings.TeamCheck = b end
+function PerplexityESP:SetRainbow(b) Settings.RainbowEnabled = b end
 function PerplexityESP:ToggleMinimap() 
     Settings.MinimapEnabled = not Settings.MinimapEnabled
     MinimapBG.Visible = Settings.MinimapEnabled
     LocalDot.Visible = Settings.MinimapEnabled
 end
 function PerplexityESP:ToggleArrows() Settings.ArrowsEnabled = not Settings.ArrowsEnabled end
-function PerplexityESP:PerformanceMode(state) Settings.PerformanceMode = state end
-function PerplexityESP:SetDistanceCheck(state, dist) 
-    Settings.DistanceCheck = state
-    if dist then Settings.MaxDistance = dist end
+function PerplexityESP:SetDistanceCheck(b, d) 
+    Settings.DistanceCheck = b
+    if d then Settings.MaxDistance = d end
 end
 
--- Main Loop (Item ESP loop REMOVED)
-local HeartbeatConnection
+local Conn
 function PerplexityESP:Start()
-    HeartbeatConnection = RunService.Heartbeat:Connect(function()
+    Conn = RunService.Heartbeat:Connect(function()
         if not Settings.Enabled then return end
-        
-        for target, esp in pairs(ESPObjects) do
-            if target.Parent then 
-                esp:Update()
-            else 
-                esp:Destroy() 
-                ESPObjects[target] = nil 
-            end
+        for p, esp in pairs(ESPObjects) do
+            if p.Parent then esp:Update()
+            else esp:Destroy() ESPObjects[p] = nil end
         end
-        
-        -- Update Local Player Dot
-        if Settings.MinimapEnabled and LocalPlayer.Character then
-            local localRoot = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if localRoot then
-                LocalDot.Position = Minimap.Position + Vector2.new(Minimap.Size/2, Minimap.Size/2)
-                LocalDot.Visible = true
-            end
+        if Settings.MinimapEnabled then
+            local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if localRoot then LocalDot.Position = Minimap.Position + Vector2.new(Minimap.Size/2, Minimap.Size/2) end
         end
     end)
 end
 
 function PerplexityESP:Stop()
-    if HeartbeatConnection then HeartbeatConnection:Disconnect() end
+    if Conn then Conn:Disconnect() end
     for _, esp in pairs(ESPObjects) do esp:Destroy() end
     ESPObjects = {}
 end
 
--- Initialize
 PerplexityESP:CreateESP()
 PerplexityESP:Start()
-
 _G.PerplexityESP = PerplexityESP
-print("✅ PerplexityESP v2.0 CLEAN loaded! (Item ESP removed)")
-print("Controls: :Toggle(), :ToggleMinimap(), :ToggleArrows(), :SetRainbow(true)")
-
+print("✅ PerplexityESP ULTRA CLEAN loaded! (No Item ESP)")
 return PerplexityESP
